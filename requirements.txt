@@ -6,3 +6,4 @@ openai
 google-generativeai
 faiss-cpu
 python-dotenv
+textblob
