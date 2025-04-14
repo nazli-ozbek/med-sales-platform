@@ -5,6 +5,8 @@ import faiss
 from dotenv import load_dotenv
 import google.generativeai as genai
 from textblob import TextBlob
+from database import get_procedure_by_name
+import re
 
 
 # RAG adımları:
@@ -38,6 +40,25 @@ def load_faiss_index(index_path="rhinoplasty.index"):
 
 def clean_input(text):
     return text.encode('utf-8', 'ignore').decode('utf-8')
+
+def extract_offer_from_text(text):
+    matches = re.findall(r"\d+", text)
+    if matches:
+        return int(matches[0])
+    return None
+
+def negotiate_price(offer, procedure, last_offer=None):
+    base = procedure["base_price"]
+    min_price = procedure["bargain_min"]
+
+    if offer >= base or last_offer is not None and offer >= last_offer:
+        return "That's a great offer! We can proceed with the treatment.", None
+    elif min_price <= offer < base:
+        counter = (offer + base) // 2
+        return f"This price is a bit low. I can offer you a special deal at ${counter}.", counter
+    else:
+        return f"Sorry, this offer is too low.", None
+
 
 
 def embed_query(query):
@@ -123,6 +144,17 @@ def main():
         user_query_raw = input("Soru: ").strip()
         user_query = clean_input(user_query_raw)
         sentiment = analyze_sentiment(user_query)
+
+        procedure_name = "rhinoplasty"  # Şimdilik manuel, ileride otomatikleştirilir
+        procedure = get_procedure_by_name(procedure_name)
+        last_counter_offer = None
+        offer = extract_offer_from_text(user_query)
+        if offer is not None and procedure:
+            negotiation_response, new_counter = negotiate_price(offer, procedure, last_counter_offer)
+            print("Cevap:", negotiation_response)
+            last_counter_offer = new_counter
+            continue
+
         print(f"[DEBUG] Kullanıcı duygu analizi sonucu: {sentiment}")
 
         if user_query.lower() in ["quit", "exit"]:
