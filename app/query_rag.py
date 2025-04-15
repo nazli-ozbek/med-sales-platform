@@ -52,7 +52,7 @@ def negotiate_price(offer, procedure, last_offer=None):
     min_price = procedure["bargain_min"]
 
     if offer >= base or last_offer is not None and offer >= last_offer:
-        return "That's a great offer! We can proceed with the treatment.", None
+        return "That's great! We can proceed with the treatment.", None
     elif min_price <= offer < base:
         counter = (offer + base) // 2
         return f"This price is a bit low. I can offer you a special deal at ${counter}.", counter
@@ -139,7 +139,7 @@ def main():
 
     # 1) FAISS index ve chunk verisini yükle
     index, chunks = load_faiss_index("rhinoplasty.index")
-
+    last_counter_offer = None
     while True:
         user_query_raw = input("Soru: ").strip()
         user_query = clean_input(user_query_raw)
@@ -147,7 +147,6 @@ def main():
 
         procedure_name = "rhinoplasty"  # Şimdilik manuel, ileride otomatikleştirilir
         procedure = get_procedure_by_name(procedure_name)
-        last_counter_offer = None
         offer = extract_offer_from_text(user_query)
         if offer is not None and procedure:
             negotiation_response, new_counter = negotiate_price(offer, procedure, last_counter_offer)
