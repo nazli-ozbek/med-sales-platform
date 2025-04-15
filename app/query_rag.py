@@ -4,6 +4,10 @@ import numpy as np
 import faiss
 from dotenv import load_dotenv
 import google.generativeai as genai
+from textblob import TextBlob
+from database import get_procedure_by_name
+import re
+
 
 # RAG adımları:
 # 1) Soru al (kullanıcı input)
@@ -34,6 +38,29 @@ def load_faiss_index(index_path="rhinoplasty.index"):
 
     return index, chunks
 
+def clean_input(text):
+    return text.encode('utf-8', 'ignore').decode('utf-8')
+
+def extract_offer_from_text(text):
+    matches = re.findall(r"\d+", text)
+    if matches:
+        return int(matches[0])
+    return None
+
+def negotiate_price(offer, procedure, last_offer=None):
+    base = procedure["base_price"]
+    min_price = procedure["bargain_min"]
+
+    if offer >= base or last_offer is not None and offer >= last_offer:
+        return "That's great! We can proceed with the treatment.", None
+    elif min_price <= offer < base:
+        counter = (offer + base) // 2
+        return f"This price is a bit low. I can offer you a special deal at ${counter}.", counter
+    else:
+        return f"Sorry, this offer is too low.", None
+
+
+
 def embed_query(query):
     """Sorgu cümlesini Gemini ile vektöre dönüştür"""
     response = genai.embed_content(
@@ -55,19 +82,37 @@ def find_relevant_chunks(faiss_index, chunks, query_vector, top_k=2):
         best_chunks.append(chunks[i])
     return best_chunks
 
-def generate_answer(chat_model_name, question, context):
-    """
-    Gemini modelini kullanarak, context'e dayalı yanıt oluşturur.
-    """
-    # 1) Model nesnesi oluştur
+def analyze_sentiment(text):
+    blob = TextBlob(text)
+    polarity = blob.sentiment.polarity
+    if polarity > 0.1:
+        return "positive"
+    elif polarity < -0.1:
+        return "negative"
+    else:
+        return "neutral"
+
+def generate_answer(chat_model_name, question, context, sentiment="neutral"):
     model = genai.GenerativeModel(chat_model_name)
 
-    # 2) Prompt'u hazırla
-    system_prompt = (
-        "You are a helpful and informative medical assistant. "
-        "You answer questions using ONLY the provided context. "
-        "If the answer is not in the context, say 'Not enough information'."
-    )
+    if sentiment == "negative":
+        system_prompt = (
+            "You are a caring and reassuring medical assistant. "
+            "The user seems concerned or negative, so try to comfort and persuade them. "
+            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
+        )
+    elif sentiment == "positive":
+        system_prompt = (
+            "You are a cheerful and helpful medical assistant. "
+            "The user seems happy, so continue the flow positively and show enthusiasm. "
+            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
+        )
+    else:
+        system_prompt = (
+            "You are a helpful and informative medical assistant. "
+            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
+        )
+
     full_prompt = (
         f"{system_prompt}\n\n"
         f"Context:\n{context}\n\n"
@@ -75,7 +120,6 @@ def generate_answer(chat_model_name, question, context):
         f"Answer:"
     )
 
-    # 3) Yanıtı üret
     response = model.generate_content(
         full_prompt,
         generation_config=genai.types.GenerationConfig(
@@ -87,6 +131,7 @@ def generate_answer(chat_model_name, question, context):
     return response.text.strip()
 
 
+
 def main():
     print("=== RAG Query Demo ===")
     print("Bu program FAISS index'i ve Gemini'yi kullanarak soru cevaplıyor.")
@@ -94,9 +139,23 @@ def main():
 
     # 1) FAISS index ve chunk verisini yükle
     index, chunks = load_faiss_index("rhinoplasty.index")
-
+    last_counter_offer = None
     while True:
-        user_query = input("Soru: ").strip()
+        user_query_raw = input("Soru: ").strip()
+        user_query = clean_input(user_query_raw)
+        sentiment = analyze_sentiment(user_query)
+
+        procedure_name = "rhinoplasty"  # Şimdilik manuel, ileride otomatikleştirilir
+        procedure = get_procedure_by_name(procedure_name)
+        offer = extract_offer_from_text(user_query)
+        if offer is not None and procedure:
+            negotiation_response, new_counter = negotiate_price(offer, procedure, last_counter_offer)
+            print("Cevap:", negotiation_response)
+            last_counter_offer = new_counter
+            continue
+
+        print(f"[DEBUG] Kullanıcı duygu analizi sonucu: {sentiment}")
+
         if user_query.lower() in ["quit", "exit"]:
             print("Görüşmek üzere!")
             break
@@ -111,7 +170,7 @@ def main():
         context_text = "\n\n".join(best_chunks)
 
         # 5) Yanıtı al
-        answer = generate_answer(CHAT_MODEL, user_query, context_text)
+        answer = generate_answer(CHAT_MODEL, user_query, context_text, sentiment)
         print("\nCevap:\n", answer, "\n")
 
 if __name__ == "__main__":
