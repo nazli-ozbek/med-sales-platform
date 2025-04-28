@@ -9,51 +9,68 @@ import google.generativeai as genai
 # Ortam değişkenlerini yükle
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Gemini API'yi başlat
 genai.configure(api_key=GEMINI_API_KEY)
 
-EMBED_MODEL = "models/embedding-001"  # Örnek bir Gemini embedding modeli
+# Embedding ayarları
+EMBED_MODEL = "models/embedding-001"
+PROCEDURE_FOLDER = "docs/procedures/"
+INDEX_FOLDER = "indexes/"
 
-FILE_PATH = "docs/procedures/rhinoplasty_info.txt"
+# Klasörleri kontrol et
+os.makedirs(INDEX_FOLDER, exist_ok=True)
 
-def main():
-    with open(FILE_PATH, "r", encoding="utf-8") as f:
+def generate_embeddings_for_file(filepath):
+    """Belirli bir dosya için FAISS index ve chunks.json oluşturur"""
+    filename = os.path.basename(filepath)
+    procedure_name = os.path.splitext(filename)[0]
+
+    # Dosya içeriğini oku
+    with open(filepath, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # 1) Metni chunk'lara böl
-    chunks = textwrap.wrap(text, 300)
+    # Metni chunk'lara böl
+    chunks = textwrap.wrap(text, width=150)
 
-    print("→ Gemini üzerinden embedding alınıyor...")
+    # Her chunk için embedding al
     vectors = []
     for chunk in chunks:
-        result = genai.embed_content(
+        response = genai.embed_content(
             model=EMBED_MODEL,
             content=chunk,
             task_type="retrieval_document"
         )
-        # Sonuç bir dict, "embedding" anahtarını okuyacağız
-        emb = result["embedding"]  # Tek chunk = tek embedding
+        emb = response["embedding"]
         vectors.append(emb)
 
-    # 2) NumPy array'e çevir
     vectors_np = np.array(vectors).astype("float32")
 
-    # 3) FAISS index
+    # FAISS index oluştur
     index = faiss.IndexFlatL2(vectors_np.shape[1])
     index.add(vectors_np)
 
-    print("→ Embedding tamamlandı. FAISS index oluşturuldu.")
+    # FAISS index kaydet
+    index_path = os.path.join(INDEX_FOLDER, f"{procedure_name}.index")
+    faiss.write_index(index, index_path)
 
-    # 4) Index'i diske kaydet
-    faiss.write_index(index, "rhinoplasty.index")
-    print("→ FAISS index dosyası kaydedildi: rhinoplasty.index")
-
-    # 5) Chunk'ları JSON olarak saklayalım
-    with open("rhinoplasty_chunks.json", "w", encoding="utf-8") as jf:
+    # Chunk'ları JSON olarak kaydet
+    chunks_path = os.path.join(INDEX_FOLDER, f"{procedure_name}_chunks.json")
+    with open(chunks_path, "w", encoding="utf-8") as jf:
         json.dump(chunks, jf, ensure_ascii=False, indent=2)
-    print("→ Chunk metinleri kaydedildi: rhinoplasty_chunks.json")
 
+    print(f"✅ {procedure_name} için embedding tamamlandı ve kayıt edildi.")
+
+def main():
+    """Tüm prosedür dosyalarını bulur ve embedding üretir"""
+    files = [os.path.join(PROCEDURE_FOLDER, f) for f in os.listdir(PROCEDURE_FOLDER) if f.endswith(".txt")]
+
+    if not files:
+        print("❗ Prosedür dosyası bulunamadı!")
+        return
+
+    for filepath in files:
+        generate_embeddings_for_file(filepath)
+
+    print("\n🎉 Tüm prosedürler için embedding işlemi tamamlandı!")
 
 if __name__ == "__main__":
     main()
