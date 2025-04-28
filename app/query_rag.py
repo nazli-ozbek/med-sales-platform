@@ -64,25 +64,35 @@ def find_relevant_chunks(index, chunks, q_vec, top_k=2):
     _, idx = index.search(q_vec, top_k)
     return [chunks[i] for i in idx[0]]
 
-def generate_answer(model_name, question, context):
+def generate_answer(model_name, user_message, context):
+    """
+    LLM’e verdiğimiz promptu, soru-cevap hack’leri olmadan
+    kullanıcı mesajını bir “istek” olarak ele alacak şekilde güncelliyoruz.
+    """
+
+    # 1) Modeli başlat
     model = genai.GenerativeModel(model_name)
 
+    # 2) Yeni, esnek ama kontrollü sistem promptu
     sys_prompt = (
         "You are a smart and concise medical assistant.\n"
-        "Answer the user's specific question based primarily on the provided context.\n"
+        "Use the provided context to answer the user's request.\n"
+        "The user message may not always be phrased as a question or end with a question mark—treat it as a request for information.\n"
         "If the context contains the necessary information, answer precisely using it.\n"
-        "If the context does not explicitly contain the answer but the information can be reasonably inferred, you may generate a basic informative answer.\n"
+        "If the context doesn't explicitly contain the answer but can be reasonably inferred, generate a basic informative answer.\n"
         "If the topic is entirely unrelated to the context, say 'Not enough information.'\n"
-        "Be brief, clear, and to the point."
+        "Be brief and to the point."
     )
 
+    # 3) Promptu oluşturuyoruz (burada artık 'User Message' kullanıyoruz)
     prompt = (
         f"{sys_prompt}\n\n"
         f"Context:\n{context}\n\n"
-        f"Question: {question}\n"
+        f"User Message: {user_message}\n"
         f"Answer:"
     )
 
+    # 4) LLM'e gönderip cevabı alıyoruz
     resp = model.generate_content(
         prompt,
         generation_config=genai.types.GenerationConfig(
@@ -90,7 +100,9 @@ def generate_answer(model_name, question, context):
             max_output_tokens=256,
         )
     )
+
     return resp.text.strip()
+
 
 # ---------------- Ana Program ----------------
 def main():
