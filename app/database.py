@@ -30,3 +30,8 @@ def get_procedure_by_name(name):
             "bargain_max": float(result[3])
         }
     return None
+
+if __name__ == "__main__":
+    procedure = get_procedure_by_name("rhinoplasty")
+    print(procedure)
+

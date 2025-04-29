@@ -4,174 +4,162 @@ import numpy as np
 import faiss
 from dotenv import load_dotenv
 import google.generativeai as genai
-from textblob import TextBlob
 from database import get_procedure_by_name
-import re
+from negotiation.session import NegotiationSession
+from state_detector import detect_state
 
-
-# RAG adımları:
-# 1) Soru al (kullanıcı input)
-# 2) Soruya embedding bul (Gemini)
-# 3) FAISS search ile en ilgili chunkları bul
-# 4) Gemini'ye "Bu chunk'a göre cevap ver" diye prompt oluştur
-# 5) Yanıtı ekrana bas
-
+# Ortam değişkenlerini yükle
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Gemini ayarları
 genai.configure(api_key=GEMINI_API_KEY)
-EMBED_MODEL = "models/embedding-001"   # Aynı embedding modeli
-CHAT_MODEL  = "gemini-2.0-flash"       # Örnek bir chat modeli
 
-def load_faiss_index(index_path="rhinoplasty.index"):
-    """Diskten FAISS index ve chunk verisini yükle"""
-    if not os.path.exists(index_path):
-        raise FileNotFoundError(f"FAISS index dosyası bulunamadı: {index_path}")
+# Model ayarları
+EMBED_MODEL = "models/embedding-001"
+CHAT_MODEL = "gemini-2.0-flash"
+INDEX_FOLDER = "indexes/"
 
-    # FAISS index'i oku
+# Prosedür Anahtar Kelime Eşlemesi
+PROCEDURE_KEYWORDS = {
+    "rhinoplasty": ["rhinoplasty", "burun", "burun estetiği"],
+    "hair_transplant": ["hair transplant", "saç", "saç ekimi"],
+    "liposuction": ["liposuction", "yağ", "yağ aldırma"],
+    "dental_implant": ["implant", "diş", "diş implantı"],
+}
+
+DEFAULT_PROCEDURE = "rhinoplasty"
+
+def clean_input(text: str) -> str:
+    return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+def find_procedure_in_query(user_message: str) -> str:
+    user_message = user_message.lower()
+    for procedure, keywords in PROCEDURE_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in user_message:
+                return procedure
+    return DEFAULT_PROCEDURE
+
+def load_faiss_index_and_chunks(procedure_name: str):
+    index_path = os.path.join(INDEX_FOLDER, f"{procedure_name}.index")
+    chunks_path = os.path.join(INDEX_FOLDER, f"{procedure_name}_chunks.json")
+
+    if not os.path.exists(index_path) or not os.path.exists(chunks_path):
+        raise FileNotFoundError(f"{procedure_name} için gerekli dosyalar bulunamadı.")
+
     index = faiss.read_index(index_path)
-
-    # Chunk metinlerini de JSON'dan al
-    with open("rhinoplasty_chunks.json", "r", encoding="utf-8") as jf:
+    with open(chunks_path, "r", encoding="utf-8") as jf:
         chunks = json.load(jf)
-
     return index, chunks
 
-def clean_input(text):
-    return text.encode('utf-8', 'ignore').decode('utf-8')
-
-def extract_offer_from_text(text):
-    matches = re.findall(r"\d+", text)
-    if matches:
-        return int(matches[0])
-    return None
-
-def negotiate_price(offer, procedure, last_offer=None):
-    base = procedure["base_price"]
-    min_price = procedure["bargain_min"]
-
-    if offer >= base or last_offer is not None and offer >= last_offer:
-        return "That's great! We can proceed with the treatment.", None
-    elif min_price <= offer < base:
-        counter = (offer + base) // 2
-        return f"This price is a bit low. I can offer you a special deal at ${counter}.", counter
-    else:
-        return f"Sorry, this offer is too low.", None
-
-
-
 def embed_query(query):
-    """Sorgu cümlesini Gemini ile vektöre dönüştür"""
     response = genai.embed_content(
         model=EMBED_MODEL,
         content=query,
         task_type="retrieval_document"
     )
-    q_vector = response["embedding"]  # Tek embedding
-    # FAISS'e arama yapabilmek için [1 x dimension] boyutuna getirelim
-    q_vec_np = np.array(q_vector, dtype="float32").reshape(1, -1)
-    return q_vec_np
+    vec = response["embedding"]
+    return np.array(vec, dtype="float32").reshape(1, -1)
 
-def find_relevant_chunks(faiss_index, chunks, query_vector, top_k=2):
-    """FAISS araması: en yakın top_k paragrafı bul"""
-    distances, indices = faiss_index.search(query_vector, top_k)
-    # indices shape: (1, top_k)
-    best_chunks = []
-    for i in indices[0]:
-        best_chunks.append(chunks[i])
-    return best_chunks
+def find_relevant_chunks(index, chunks, q_vec, top_k=2):
+    _, idx = index.search(q_vec, top_k)
+    return [chunks[i] for i in idx[0]]
 
-def analyze_sentiment(text):
-    blob = TextBlob(text)
-    polarity = blob.sentiment.polarity
-    if polarity > 0.1:
-        return "positive"
-    elif polarity < -0.1:
-        return "negative"
-    else:
-        return "neutral"
+def generate_answer(model_name, user_message, context):
+    """
+    LLM’e verdiğimiz promptu, soru-cevap hack’leri olmadan
+    kullanıcı mesajını bir “istek” olarak ele alacak şekilde güncelliyoruz.
+    """
 
-def generate_answer(chat_model_name, question, context, sentiment="neutral"):
-    model = genai.GenerativeModel(chat_model_name)
+    # 1) Modeli başlat
+    model = genai.GenerativeModel(model_name)
 
-    if sentiment == "negative":
-        system_prompt = (
-            "You are a caring and reassuring medical assistant. "
-            "The user seems concerned or negative, so try to comfort and persuade them. "
-            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
-        )
-    elif sentiment == "positive":
-        system_prompt = (
-            "You are a cheerful and helpful medical assistant. "
-            "The user seems happy, so continue the flow positively and show enthusiasm. "
-            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
-        )
-    else:
-        system_prompt = (
-            "You are a helpful and informative medical assistant. "
-            "You answer ONLY using the provided context. If the answer is not in the context, say 'Not enough information'."
-        )
+    # 2) Yeni, esnek ama kontrollü sistem promptu
+    sys_prompt = (
+        "You are a smart and concise medical assistant.\n"
+        "Use the provided context to answer the user's request.\n"
+        "The user message may not always be phrased as a question or end with a question mark—treat it as a request for information.\n"
+        "If the context contains the necessary information, answer precisely using it.\n"
+        "If the context doesn't explicitly contain the answer but can be reasonably inferred, generate a basic informative answer.\n"
+        "If the topic is entirely unrelated to the context, say 'Not enough information.'\n"
+        "Be brief and to the point."
+    )
 
-    full_prompt = (
-        f"{system_prompt}\n\n"
+    # 3) Promptu oluşturuyoruz (burada artık 'User Message' kullanıyoruz)
+    prompt = (
+        f"{sys_prompt}\n\n"
         f"Context:\n{context}\n\n"
-        f"Question: {question}\n"
+        f"User Message: {user_message}\n"
         f"Answer:"
     )
 
-    response = model.generate_content(
-        full_prompt,
+    # 4) LLM'e gönderip cevabı alıyoruz
+    resp = model.generate_content(
+        prompt,
         generation_config=genai.types.GenerationConfig(
             temperature=0.1,
             max_output_tokens=256,
         )
     )
 
-    return response.text.strip()
+    return resp.text.strip()
 
 
-
+# ---------------- Ana Program ----------------
 def main():
-    print("=== RAG Query Demo ===")
-    print("Bu program FAISS index'i ve Gemini'yi kullanarak soru cevaplıyor.")
-    print("Çıkmak için 'quit' yaz.\n")
+    print("=== Çoklu Prosedür Destekli RAG Chatbot ===")
+    print("Soru sorabilirsiniz. Çıkmak için 'quit' yazın.\n")
 
-    # 1) FAISS index ve chunk verisini yükle
-    index, chunks = load_faiss_index("rhinoplasty.index")
-    last_counter_offer = None
+    last_session = None
+    last_procedure = DEFAULT_PROCEDURE
+    faiss_index, chunks = load_faiss_index_and_chunks(last_procedure)
+    procedure_info = get_procedure_by_name(last_procedure)
+    session = NegotiationSession(procedure_info)
+
     while True:
-        user_query_raw = input("Soru: ").strip()
-        user_query = clean_input(user_query_raw)
-        sentiment = analyze_sentiment(user_query)
+        raw_query = input("Soru: ").strip()
 
-        procedure_name = "rhinoplasty"  # Şimdilik manuel, ileride otomatikleştirilir
-        procedure = get_procedure_by_name(procedure_name)
-        offer = extract_offer_from_text(user_query)
-        if offer is not None and procedure:
-            negotiation_response, new_counter = negotiate_price(offer, procedure, last_counter_offer)
-            print("Cevap:", negotiation_response)
-            last_counter_offer = new_counter
+        if not raw_query:
             continue
 
-        print(f"[DEBUG] Kullanıcı duygu analizi sonucu: {sentiment}")
+        user_query = clean_input(raw_query)
 
         if user_query.lower() in ["quit", "exit"]:
             print("Görüşmek üzere!")
             break
 
-        # 2) Query embedding
-        query_vec = embed_query(user_query)
+        detected_procedure = find_procedure_in_query(user_query)
+        print(f"[DEBUG] Detected Procedure: {detected_procedure}")
 
-        # 3) FAISS ile en ilgili 2 chunk
-        best_chunks = find_relevant_chunks(index, chunks, query_vec, top_k=2)
+        if detected_procedure != last_procedure:
+            faiss_index, chunks = load_faiss_index_and_chunks(detected_procedure)
+            procedure_info = get_procedure_by_name(detected_procedure)
+            session = NegotiationSession(procedure_info)
+            last_procedure = detected_procedure
 
-        # 4) Chunk metinlerini birleştir
-        context_text = "\n\n".join(best_chunks)
+        detected_state = detect_state(user_query)
+        print(f"[DEBUG] Detected State: {detected_state}")
 
-        # 5) Yanıtı al
-        answer = generate_answer(CHAT_MODEL, user_query, context_text, sentiment)
-        print("\nCevap:\n", answer, "\n")
+        if detected_state == "ASK_PRICE":
+            print(f"The base price for {detected_procedure} is {procedure_info['base_price']}₺.")
+            continue
+
+        elif detected_state == "NEGOTIATE":
+            negotiation_response = session.respond(user_query)
+            print("Cevap:", negotiation_response)
+            continue
+
+        elif detected_state == "ACCEPT":
+            negotiation_response = session.respond(user_query)
+            print("Cevap:", negotiation_response)
+            continue
+
+        else:  # ASK_INFO veya default
+            query_vec = embed_query(user_query)
+            best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
+            context_text = "\n\n".join(best_chunks)
+            answer = generate_answer(CHAT_MODEL, user_query, context_text)
+
+            print("\nCevap:\n", answer, "\n")
 
 if __name__ == "__main__":
     main()
