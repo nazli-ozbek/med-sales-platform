@@ -64,40 +64,46 @@ def generate_answer(model_name, user_message, context, current_state):
     polarity_list.append(polarity)
     avg_polarity = sum(polarity_list) / len(polarity_list)
 
-    # Konuşma geçmişini güncelle
+    # Chat geçmişi
     chat_history.append(f"User: {user_message}")
-    conversation_log = "\n".join(chat_history[-6:])  # Son 3 çift (6 satır)
+    conversation_log = "\n".join(chat_history[-6:])  # Son 3 çift
 
+    # Prompt içeriği
     system_prompt = (
         "You are a helpful and natural-sounding AI assistant helping users with medical procedures.\n"
-        "You have access to background context and a classified user intent (called Detected State).\n"
-        "Use these to guide your tone, reply, and conversation strategy.\n\n"
+        "You have access to:\n"
+        "- The user's current intent (called Detected State),\n"
+        "- Background information (Context),\n"
+        "- The user's emotional tone (via sentiment polarity).\n\n"
 
         "Detected State meanings:\n"
-        "- QUIT → If user types quit finish the"
-        "- LATENT_INTEREST → The user is hinting at an issue but not asking directly. Respond gently, suggest a procedure, and ask if they want more info.\n"
-        "- ASK_INFO → Provide short, friendly explanation. Ask if they'd like to hear risks.\n"
-        "- ASK_RISKS → List major risks clearly. Ask if they want recovery details too.\n"
-        "- ASK_RECOVERY → Explain recovery timeline, pain level, activity restrictions.\n"
-        "- ASK_PRICE → State the base price. Mention value or what it includes.\n"
-        "- NEGOTIATE → Respond kindly. Decline or counteroffer within bounds.\n"
-        "- ACCEPT → Confirm enthusiastically and offer next steps.\n"
-        "- ASK_ALTERNATIVES → Suggest other treatments that could help.\n"
-        "- ESCALATE → Politely explain a human will assist.\n\n"
+        "- LATENT_INTEREST → User is hinting but not asking directly. Gently suggest a procedure and ask if they'd like more info.\n"
+        "- ASK_INFO → Give short helpful explanation. Ask if they'd like to hear about risks.\n"
+        "- ASK_RISKS → Clearly list main risks. Ask if they want to know about recovery too.\n"
+        "- ASK_RECOVERY → Talk about healing time, restrictions, etc.\n"
+        "- ASK_PRICE → State the price. Mention added value if appropriate.\n"
+        "- NEGOTIATE → Politely decline or counter within allowed range.\n"
+        "- ACCEPT → Confirm and offer next steps.\n"
+        "- ASK_ALTERNATIVES → Suggest complementary procedures.\n"
+        "- ESCALATE → Say a human rep will assist soon.\n\n"
 
-        "Sentiment Analysis:\n"
-        "- Current message polarity: {polarity:.2f}\n"
-        "- Average sentiment polarity: {avg_polarity:.2f}\n"
+        f"Sentiment Analysis:\n"
+        f"- Current message polarity: {polarity:.2f}\n"
+        f"- Average sentiment polarity: {avg_polarity:.2f}\n"
         "Interpretation:\n"
-        "- Close to +1.0 → User is excited, trusting, open.\n"
-        "- Close to  0.0 → User is neutral or uncertain.\n"
-        "- Close to -1.0 → User is skeptical, emotional, or frustrated.\n"
-        "Use this to adapt your tone.\n\n"
-
-        "Always include a soft follow-up question (unless user said 'quit') to keep the conversation flowing."
+        "- Close to +1.0 → excited, trusting\n"
+        "- Close to  0.0 → neutral, uncertain\n"
+        "- Close to -1.0 → frustrated, skeptical\n"
+        "Use this to adapt your tone accordingly.\n"
     )
 
+    # quit/exit özel durumu için son talimat
+    if user_message.lower() in ["quit", "exit"]:
+        system_prompt += "\n\nThe user wants to end the conversation. Respond politely and do not ask any further questions."
+    else:
+        system_prompt += "\n\nAlways end your reply with a soft, relevant follow-up question to keep the conversation going."
 
+    # Final prompt
     prompt = (
         f"{system_prompt}\n\n"
         f"Detected State: {current_state}\n"
