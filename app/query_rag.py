@@ -4,9 +4,13 @@ import numpy as np
 import faiss
 from dotenv import load_dotenv
 import google.generativeai as genai
+
 from database import get_procedure_by_name
 from negotiation.session import NegotiationSession
-from state_detector import detect_state
+from state_detector import detect_state, detect_procedure
+from textblob import TextBlob
+from conversation_manager import ConversationManager
+
 
 # Ortam değişkenlerini yükle
 load_dotenv()
@@ -18,26 +22,13 @@ EMBED_MODEL = "models/embedding-001"
 CHAT_MODEL = "gemini-2.0-flash"
 INDEX_FOLDER = "indexes/"
 
-# Prosedür Anahtar Kelime Eşlemesi
-PROCEDURE_KEYWORDS = {
-    "rhinoplasty": ["rhinoplasty", "burun", "burun estetiği"],
-    "hair_transplant": ["hair transplant", "saç", "saç ekimi"],
-    "liposuction": ["liposuction", "yağ", "yağ aldırma"],
-    "dental_implant": ["implant", "diş", "diş implantı"],
-}
 
-DEFAULT_PROCEDURE = "rhinoplasty"
+# Chat geçmişi ve duygu skorları
+chat_history = []
+polarity_list = []
 
 def clean_input(text: str) -> str:
     return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
-
-def find_procedure_in_query(user_message: str) -> str:
-    user_message = user_message.lower()
-    for procedure, keywords in PROCEDURE_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in user_message:
-                return procedure
-    return DEFAULT_PROCEDURE
 
 def load_faiss_index_and_chunks(procedure_name: str):
     index_path = os.path.join(INDEX_FOLDER, f"{procedure_name}.index")
@@ -64,56 +55,79 @@ def find_relevant_chunks(index, chunks, q_vec, top_k=2):
     _, idx = index.search(q_vec, top_k)
     return [chunks[i] for i in idx[0]]
 
-def generate_answer(model_name, user_message, context):
-    """
-    LLM’e verdiğimiz promptu, soru-cevap hack’leri olmadan
-    kullanıcı mesajını bir “istek” olarak ele alacak şekilde güncelliyoruz.
-    """
-
-    # 1) Modeli başlat
+def generate_answer(model_name, user_message, context, current_state):
     model = genai.GenerativeModel(model_name)
 
-    # 2) Yeni, esnek ama kontrollü sistem promptu
-    sys_prompt = (
-        "You are a smart and concise medical assistant.\n"
-        "Use the provided context to answer the user's request.\n"
-        "The user message may not always be phrased as a question or end with a question mark—treat it as a request for information.\n"
-        "If the context contains the necessary information, answer precisely using it.\n"
-        "If the context doesn't explicitly contain the answer but can be reasonably inferred, generate a basic informative answer.\n"
-        "If the topic is entirely unrelated to the context, say 'Not enough information.'\n"
-        "Be brief and to the point."
+    # Duygu analizi
+    blob = TextBlob(user_message)
+    polarity = blob.sentiment.polarity
+    polarity_list.append(polarity)
+    avg_polarity = sum(polarity_list) / len(polarity_list)
+
+    # Konuşma geçmişini güncelle
+    chat_history.append(f"User: {user_message}")
+    conversation_log = "\n".join(chat_history[-6:])  # Son 3 çift (6 satır)
+
+    system_prompt = (
+        "You are a helpful and natural-sounding AI assistant helping users with medical procedures.\n"
+        "You have access to background context and a classified user intent (called Detected State).\n"
+        "Use these to guide your tone, reply, and conversation strategy.\n\n"
+
+        "Detected State meanings:\n"
+        "- QUIT → If user types quit finish the"
+        "- LATENT_INTEREST → The user is hinting at an issue but not asking directly. Respond gently, suggest a procedure, and ask if they want more info.\n"
+        "- ASK_INFO → Provide short, friendly explanation. Ask if they'd like to hear risks.\n"
+        "- ASK_RISKS → List major risks clearly. Ask if they want recovery details too.\n"
+        "- ASK_RECOVERY → Explain recovery timeline, pain level, activity restrictions.\n"
+        "- ASK_PRICE → State the base price. Mention value or what it includes.\n"
+        "- NEGOTIATE → Respond kindly. Decline or counteroffer within bounds.\n"
+        "- ACCEPT → Confirm enthusiastically and offer next steps.\n"
+        "- ASK_ALTERNATIVES → Suggest other treatments that could help.\n"
+        "- ESCALATE → Politely explain a human will assist.\n\n"
+
+        "Sentiment Analysis:\n"
+        "- Current message polarity: {polarity:.2f}\n"
+        "- Average sentiment polarity: {avg_polarity:.2f}\n"
+        "Interpretation:\n"
+        "- Close to +1.0 → User is excited, trusting, open.\n"
+        "- Close to  0.0 → User is neutral or uncertain.\n"
+        "- Close to -1.0 → User is skeptical, emotional, or frustrated.\n"
+        "Use this to adapt your tone.\n\n"
+
+        "Always include a soft follow-up question (unless user said 'quit') to keep the conversation flowing."
     )
 
-    # 3) Promptu oluşturuyoruz (burada artık 'User Message' kullanıyoruz)
+
     prompt = (
-        f"{sys_prompt}\n\n"
+        f"{system_prompt}\n\n"
+        f"Detected State: {current_state}\n"
         f"Context:\n{context}\n\n"
+        f"Conversation History:\n{conversation_log}\n"
         f"User Message: {user_message}\n"
-        f"Answer:"
+        f"Agent Response:"
     )
 
-    # 4) LLM'e gönderip cevabı alıyoruz
-    resp = model.generate_content(
+    response = model.generate_content(
         prompt,
         generation_config=genai.types.GenerationConfig(
-            temperature=0.1,
+            temperature=0.3,
             max_output_tokens=256,
         )
     )
 
-    return resp.text.strip()
-
+    response_text = response.text.strip()
+    chat_history.append(f"Agent: {response_text}")
+    return response_text
 
 # ---------------- Ana Program ----------------
 def main():
     print("=== Çoklu Prosedür Destekli RAG Chatbot ===")
     print("Soru sorabilirsiniz. Çıkmak için 'quit' yazın.\n")
 
-    last_session = None
-    last_procedure = DEFAULT_PROCEDURE
+    last_procedure = "rhinoplasty"
     faiss_index, chunks = load_faiss_index_and_chunks(last_procedure)
     procedure_info = get_procedure_by_name(last_procedure)
-    session = NegotiationSession(procedure_info)
+    manager = ConversationManager()
 
     while True:
         raw_query = input("Soru: ").strip()
@@ -127,39 +141,41 @@ def main():
             print("Görüşmek üzere!")
             break
 
-        detected_procedure = find_procedure_in_query(user_query)
+        # 1. Prosedür tespiti
+        detected_procedure = detect_procedure(user_query)
+        if detected_procedure == "unknown":
+            detected_procedure = last_procedure
         print(f"[DEBUG] Detected Procedure: {detected_procedure}")
 
         if detected_procedure != last_procedure:
             faiss_index, chunks = load_faiss_index_and_chunks(detected_procedure)
             procedure_info = get_procedure_by_name(detected_procedure)
-            session = NegotiationSession(procedure_info)
             last_procedure = detected_procedure
 
+        # 2. State tespiti
         detected_state = detect_state(user_query)
         print(f"[DEBUG] Detected State: {detected_state}")
+        manager.update_state(detected_state)
 
-        if detected_state == "ASK_PRICE":
-            print(f"The base price for {detected_procedure} is {procedure_info['base_price']}₺.")
+        # 3. ESCALATE durumunda özel yönlendirme
+        if detected_state == "ESCALATE":
+            print("Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle...")
             continue
 
-        elif detected_state == "NEGOTIATE":
-            negotiation_response = session.respond(user_query)
-            print("Cevap:", negotiation_response)
-            continue
+        # 4. Sorgu gömme + context bulma
+        query_vec = embed_query(user_query)
+        best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
+        context_text = "\n\n".join(best_chunks)
 
-        elif detected_state == "ACCEPT":
-            negotiation_response = session.respond(user_query)
-            print("Cevap:", negotiation_response)
-            continue
+        # 5. LLM üzerinden cevap üretimi
+        answer = generate_answer(
+            model_name=CHAT_MODEL,
+            user_message=user_query,
+            context=context_text,
+            current_state=detected_state
+        )
 
-        else:  # ASK_INFO veya default
-            query_vec = embed_query(user_query)
-            best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
-            context_text = "\n\n".join(best_chunks)
-            answer = generate_answer(CHAT_MODEL, user_query, context_text)
-
-            print("\nCevap:\n", answer, "\n")
+        print("\nCevap:\n", answer, "\n")
 
 if __name__ == "__main__":
     main()
