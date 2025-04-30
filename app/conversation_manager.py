@@ -11,7 +11,7 @@ class ConversationManager:
             "ASK_RISKS": "ASK_RECOVERY",
             "ASK_RECOVERY": "END",
             "NEGOTIATE": "END",
-            "ACCEPT": "END",
+            "ACCEPT_PRICE": "END",
             "ASK_PRICE": "NEGOTIATE",
             "ASK_ALTERNATIVES": "END",
             "ESCALATE": "HUMAN",

@@ -1,6 +1,7 @@
 import google.generativeai as genai
 
-def detect_state(user_message):
+def detect_state(user_message, last_agent_message=None) -> str:
+
     """
     Kullanıcının mesajından niyet (intent) tespiti yapar.
     Genişletilmiş sınıflarla semantic sınıflandırma yapar.
@@ -15,7 +16,7 @@ def detect_state(user_message):
         "- ASK_INFO: User requests general details (how it's done, what it is, etc.)\n"
         "- ASK_PRICE: User asks about cost or price.\n"
         "- NEGOTIATE: User makes a price offer or asks for discount.\n"
-        "- ACCEPT: User agrees to a proposal or price.\n"
+        "- ACCEPT_PRICE: User accepts the offered price, but has not yet confirmed the procedure.\n"
         "- ASK_RISKS: User wants to know about risks, complications, or side effects.\n"
         "- ASK_RECOVERY: User inquires about healing, downtime, or recovery.\n"
         "- ASK_ALTERNATIVES: User looks for other supporting treatments or alternatives.\n"
@@ -24,11 +25,22 @@ def detect_state(user_message):
         "- Respond ONLY with one of the labels above.\n"
         "- Do NOT explain.\n"
         "- If unsure, default to 'ASK_INFO'.\n"
-        "\nUser Message: " + user_message + "\nAnswer:"
+        "-If the context involves price, treat it as ASK_PRICE by default.\n"
+        "-If the user replies with yes, sure, or okay, check context to disambiguate.\n"
+        "-Only assign ACCEPT_PRICE if it is clear that the user confirms they want to proceed with the procedure by checking the context.\n."
     )
 
+    if last_agent_message:
+        system_prompt += (
+            "\nContext:\n"
+            f"The assistant previously said: \"{last_agent_message.strip()}\"\n"
+            "Consider the context to disambiguate short or vague user replies.\n"
+        )
+
+    full_prompt = f"{system_prompt}\n\nUser Message: {user_message}\nAnswer:"
+
     response = model.generate_content(
-        system_prompt,
+        full_prompt,
         generation_config=genai.types.GenerationConfig(
             temperature=0.0,
             max_output_tokens=10,

@@ -83,9 +83,11 @@ def generate_answer(model_name, user_message, context, current_state):
         "- ASK_RECOVERY → Talk about healing time, restrictions, etc.\n"
         "- ASK_PRICE → State the price. Mention added value if appropriate.\n"
         "- NEGOTIATE → Politely decline or counter within allowed range.\n"
-        "- ACCEPT → Confirm and offer next steps.\n"
+        "- ACCEPT_PRICE → If the price is settled, confirm and offer next steps.\n"
         "- ASK_ALTERNATIVES → Suggest complementary procedures.\n"
-        "- ESCALATE → Say a human rep will assist soon.\n\n"
+        "- ESCALATE → Say a human rep will assist soon.\n"
+        "- CONSULT_BOOKED → The user has booked a consultation or confirmed an appointment. Politely confirm and end the conversation without further questions.\n"
+    
 
         f"Sentiment Analysis:\n"
         f"- Current message polarity: {polarity:.2f}\n"
@@ -160,19 +162,31 @@ def main():
             last_procedure = detected_procedure
 
         # 2. State tespiti
-        detected_state = detect_state(user_query)
+        last_agent_msg = None
+        for entry in reversed(chat_history):
+            if entry.startswith("Agent:"):
+                last_agent_msg = entry.replace("Agent:", "").strip()
+                break
+
+        detected_state = detect_state(user_query, last_agent_message=last_agent_msg)
         print(f"[DEBUG] Detected State: {detected_state}")
         manager.update_state(detected_state)
+
 
         # 3. ESCALATE durumunda özel yönlendirme
         if detected_state == "ESCALATE":
             print("Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle...")
             continue
 
-        if detected_state == "NEGOTIATE":
+        if detected_state in("NEGOTIATE" , "ASK_PRICE", "ACCEPT_PRICE") :
             negotiation_response = session.respond(user_query)
             print("Cevap:", negotiation_response)
             continue
+
+        if detected_state == "CONSULT_BOOKED":
+            print("Görüşmek üzere!")
+            break
+
 
         # 4. Sorgu gömme + context bulma
         query_vec = embed_query(user_query)
