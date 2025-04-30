@@ -147,7 +147,7 @@ def main():
         user_query = clean_input(raw_query)
 
         if user_query.lower() in ["quit", "exit"]:
-            print("Görüşmek üzere!")
+            print("Goodbye!")
             break
 
         # 1. Prosedür tespiti
