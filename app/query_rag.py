@@ -134,6 +134,7 @@ def main():
     faiss_index, chunks = load_faiss_index_and_chunks(last_procedure)
     procedure_info = get_procedure_by_name(last_procedure)
     manager = ConversationManager()
+    session = NegotiationSession(procedure_info)
 
     while True:
         raw_query = input("Soru: ").strip()
@@ -166,6 +167,11 @@ def main():
         # 3. ESCALATE durumunda özel yönlendirme
         if detected_state == "ESCALATE":
             print("Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle...")
+            continue
+
+        if detected_state == "NEGOTIATE":
+            negotiation_response = session.respond(user_query)
+            print("Cevap:", negotiation_response)
             continue
 
         # 4. Sorgu gömme + context bulma
