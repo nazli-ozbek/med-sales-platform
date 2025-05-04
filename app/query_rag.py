@@ -149,59 +149,82 @@ def main():
         if user_query.lower() in ["quit", "exit"]:
             print("Goodbye!")
             break
+        try:
+            # 1. Prosedür tespiti
+            detected_procedure = detect_procedure(user_query)
+            if detected_procedure == "unknown":
+                detected_procedure = last_procedure
+            print(f"[DEBUG] Detected Procedure: {detected_procedure}")
 
-        # 1. Prosedür tespiti
-        detected_procedure = detect_procedure(user_query)
-        if detected_procedure == "unknown":
-            detected_procedure = last_procedure
-        print(f"[DEBUG] Detected Procedure: {detected_procedure}")
+            if detected_procedure != last_procedure:
+                faiss_index, chunks = load_faiss_index_and_chunks(detected_procedure)
+                procedure_info = get_procedure_by_name(detected_procedure)
+                last_procedure = detected_procedure
 
-        if detected_procedure != last_procedure:
-            faiss_index, chunks = load_faiss_index_and_chunks(detected_procedure)
-            procedure_info = get_procedure_by_name(detected_procedure)
-            last_procedure = detected_procedure
+            # 2. State tespiti
+            last_agent_msg = None
+            for entry in reversed(chat_history):
+                if entry.startswith("Agent:"):
+                    last_agent_msg = entry.replace("Agent:", "").strip()
+                    break
 
-        # 2. State tespiti
-        last_agent_msg = None
-        for entry in reversed(chat_history):
-            if entry.startswith("Agent:"):
-                last_agent_msg = entry.replace("Agent:", "").strip()
+            detected_state = detect_state(user_query, last_agent_message=last_agent_msg)
+            print(f"[DEBUG] Detected State: {detected_state}")
+            manager.update_state(detected_state)
+
+
+            # 3. ESCALATE durumunda özel yönlendirme
+            if detected_state == "ESCALATE":
+                print("Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle...")
+                continue
+
+            if detected_state in("NEGOTIATE" , "ASK_PRICE", "ACCEPT_PRICE") :
+                negotiation_response = session.respond(user_query)
+                print("Cevap:", negotiation_response)
+                continue
+
+            if detected_state == "CONSULT_BOOKED":
+                print("Görüşmek üzere!")
                 break
 
-        detected_state = detect_state(user_query, last_agent_message=last_agent_msg)
-        print(f"[DEBUG] Detected State: {detected_state}")
-        manager.update_state(detected_state)
+
+            # 4. Sorgu gömme + context bulma
+            query_vec = embed_query(user_query)
+            best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
+            context_text = "\n\n".join(best_chunks)
+
+            # 5. LLM üzerinden cevap üretimi
+            answer = generate_answer(
+                model_name=CHAT_MODEL,
+                user_message=user_query,
+                context=context_text,
+                current_state=detected_state
+            )
+
+            print("\nCevap:\n", answer, "\n")
 
 
-        # 3. ESCALATE durumunda özel yönlendirme
-        if detected_state == "ESCALATE":
-            print("Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle...")
-            continue
 
-        if detected_state in("NEGOTIATE" , "ASK_PRICE", "ACCEPT_PRICE") :
-            negotiation_response = session.respond(user_query)
-            print("Cevap:", negotiation_response)
-            continue
+        except Exception as e:
+            fallback_prompt = (
+                "You are a polite and understanding medical AI assistant." 
+                "There was a temporary issue while processing the user's request. "
+                "Apologize kindly and offer to connect the user with a human representative if needed."
+            )
+            try:
+                model = genai.GenerativeModel(CHAT_MODEL)
+                response = model.generate_content(
+                    fallback_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,
+                        max_output_tokens=150,
+                    )
+                )
+                print("\nCevap:\n", response.text.strip(), "\n")
+            except Exception as inner_e:
+                print(
+                    "\nCevap:\nÜzgünüm, şu anda isteğinizi işleyemiyorum. En kısa sürede bir temsilcimiz size yardımcı olacaktır.\n")
 
-        if detected_state == "CONSULT_BOOKED":
-            print("Görüşmek üzere!")
-            break
-
-
-        # 4. Sorgu gömme + context bulma
-        query_vec = embed_query(user_query)
-        best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
-        context_text = "\n\n".join(best_chunks)
-
-        # 5. LLM üzerinden cevap üretimi
-        answer = generate_answer(
-            model_name=CHAT_MODEL,
-            user_message=user_query,
-            context=context_text,
-            current_state=detected_state
-        )
-
-        print("\nCevap:\n", answer, "\n")
 
 if __name__ == "__main__":
     main()

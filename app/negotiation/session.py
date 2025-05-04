@@ -21,6 +21,7 @@ class NegotiationSession:
         response = self._ask_llm(prompt)
 
         self.history.append({"llm": response})
+
         return response
 
     def _build_prompt(self, user_message, current_polarity, avg_polarity):
@@ -38,7 +39,7 @@ class NegotiationSession:
         - Base Price: {self.base}₺
         - Minimum Acceptable Price: {self.min_price}₺
         - Maximum Allowable Price: {self.max_price}₺
-
+        
         RULES YOU MUST FOLLOW:
         - Only negotiate on the procedure price itself.
         - DO NOT offer additional packages, upgrades, services, or products unless the user specifically asks.
@@ -46,21 +47,31 @@ class NegotiationSession:
         - Stay within the negotiation range [{self.min_price}₺ - {self.max_price}₺].
         - If the user's offer is below the Minimum Acceptable Price, decline politely and counter-offer with a fair price.
         - Always stay polite, realistic, and emotionally aware based on the user's emotional tone.
-
-        Sentiment analysis:
+        
+        Sentiment Analysis:
         - Current Message Polarity: {current_polarity:.2f}
         - Average Conversation Polarity: {avg_polarity:.2f}
         - Positive polarity (+1.0): Excited, Trusting.
         - Negative polarity (-1.0): Angry, Doubtful.
         - Neutral (0.0): Uncertain, Neutral.
-
+        
+        Price Strategy:
+        - For your irst offer, decide on a fair starting price based on the user’s average emotional tone. 
+        - The first offer should be between the base price ({self.base}) and the maximum allowed price ({self.max_price})
+        - Do not mention the base price, just start the negotiation using the first offer
+        - Be adaptive: if the user seems more positive, you may start with a slightly higher price.
+        - If the user seems skeptical or negative, consider starting with a more cautious offer.
+        - Make sure the price is within the allowed range.
+        - Start the negotiation by using this strategy for your initial offer.
+        
         Here is the conversation history so far:
         {history_lines}
-
+        
         Respond briefly and persuasively based on the conversation context.
-
-        User: {user_message}
+        
+        User: {user_message}  
         Agent:
+
         '''.strip()
 
     def _ask_llm(self, prompt):
