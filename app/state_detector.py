@@ -13,10 +13,10 @@ def detect_state(user_message, last_agent_message=None) -> str:
         "You are an AI assistant classifying user intent regarding medical procedures.\n\n"
         "Classify the user's message into one of the following intents as current state:\n\n"
 
-        "- QUESTIONNAIRE: The user is in the early phase of the conversation and must complete a short medical intake form. "
-        "This includes messages where the user is answering personal medical questions such as name, age, allergies, surgery date, etc.\n"
-        "Examples: 'Hi', 'My name is Sarah', 'I am 29', 'No allergies', 'I had no previous surgeries'\n\n"
-        "- LATENT_INTEREST: The user expresses dissatisfaction with a body part or appearance without directly asking questions. \n"
+        "- QUESTIONNAIRE: The user is currently answering the medical intake form (questions 1 to 8). "
+        "Only classify as QUESTIONNAIRE if the user is answering one of the specific 8 questions. "
+        "If the assistant just asked question 8 and the user replied, the form is complete. Then classify based on the user's next intent.\n"
+        "- LATENT_INTEREST: The user expresses dissatisfaction with a body part or appearance with or without directly asking questions. \n"
         "  Example: 'I don’t like my nose.' / 'I wish my teeth looked better.'\n\n"
         "- ASK_INFO: The user wants to know what the procedure is, how it's performed, or general information. \n"
         "  Example: 'How does rhinoplasty work?' / 'Can you tell me what liposuction is?'\n\n"
@@ -78,7 +78,7 @@ def detect_procedure(user_message: str) -> str:
         "- liposuction\n"
         "- dental_implant\n\n"
         "If the user's message clearly relates to one of these, respond ONLY with the procedure name.\n"
-        "If you are unsure or if the message is irrelevant, respond ONLY with 'unknown'.\n"
+        "If you are unsure or if the message is irrelevant, default to 'rhinoplasty'.\n"
         "Do not explain. Respond only with the label text."
     )
 
