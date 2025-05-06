@@ -6,6 +6,7 @@ class ConversationManager:
 
         # Örnek geçiş tablosu
         self.transition_map = {
+            "QUESTIONNAIRE:": "LATENT_INTEREST",
             "LATENT_INTEREST": "ASK_INFO",
             "ASK_INFO": "ASK_RISKS",
             "ASK_RISKS": "ASK_RECOVERY",
