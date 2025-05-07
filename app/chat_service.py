@@ -30,6 +30,7 @@ summarizer = SummarizerAgent()
 manager = ConversationManager()
 questionnaire = QuestionnaireManager()
 form_completed = False
+form_completed = False
 
 last_procedure = "rhinoplasty"
 faiss_index, chunks = None, None
@@ -227,15 +228,16 @@ async def handle_chat_request(chat_input):
                 )
                 return {"response": answer}
             else:
-                return {"response": "Geçersiz seçim. Lütfen tekrar deneyin."}
+                return {"response": "Invalid choice. Please try again."}
 
         if detected_state == "SELECT_DOCTOR":
             doctors = get_doctors_by_procedure(detected_procedure)
-            doctor_list = "\n".join([f"{i+1}. Dr. {doc['name']} ({doc['specialization']})" for i, doc in enumerate(doctors)])
+            doctor_list = "\n".join([f"{i+1}. {doc['name']} ({doc['specialization']})" for i, doc in enumerate(doctors)])
             return {"response": f"Suitable doctors for this procedure: \n \n{doctor_list}\nPlease select a doctor (enter a number)."}
 
         if detected_state == "ESCALATE":
-            return {"response": "Bu konuda seni uzman bir temsilciye yönlendiriyorum. Lütfen bekle..."}
+            return {"response": "I'm connecting you to a specialist representative. Please hold on..."
+        }
 
         if detected_state in ("NEGOTIATE", "ASK_PRICE", "ACCEPT_PRICE"):
             negotiation_response = session.respond(user_query)
