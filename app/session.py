@@ -51,6 +51,8 @@ class NegotiationSession:
         - Stay within the negotiation range [{self.min_price}₺ - {self.max_price}₺].
         - If the user's offer is below the Minimum Acceptable Price, decline politely and counter-offer with a fair price.
         - Always stay polite, realistic, and emotionally aware based on the user's emotional tone.
+        - Once an offer is made, NEVER increase your next offer beyond that amount.
+        - All future offers must either decrease or remain the same.
         
         Sentiment analysis:
         - Current Message Polarity: {current_polarity:.2f}
@@ -67,6 +69,8 @@ class NegotiationSession:
         - If the user seems skeptical or negative, consider starting with a more cautious offer.
         - Make sure the price is within the allowed range.
         - Start the negotiation by using this strategy for your initial offer.
+        - After your first offer, any future counter-offers MUST be equal to or lower than your previous one.
+        - Never increase your price during the negotiation.
 
         Here is the conversation history so far:
         {history_lines}

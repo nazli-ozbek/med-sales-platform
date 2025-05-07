@@ -4,7 +4,6 @@ CREATE TABLE IF NOT EXISTS doctors (
     full_name TEXT NOT NULL,
     specialization TEXT,
     languages TEXT[],
-    bio TEXT
 );
 
 -- Prosedürler tablosu

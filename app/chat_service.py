@@ -20,7 +20,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # Model ayarları
 EMBED_MODEL = "models/embedding-001"
-CHAT_MODEL = "gemini-2.0-flash-lite"
+CHAT_MODEL = "gemini-2.0-flash"
 INDEX_FOLDER = "indexes/"
 
 # Global objeler
@@ -152,6 +152,8 @@ async def handle_chat_request(chat_input):
         manager = ConversationManager()
         questionnaire = QuestionnaireManager()
         form_completed = False
+        procedure_info = get_procedure_by_name(last_procedure)
+        session = None
 
         # LLM ile gerçek karşılama mesajı üret
         greeting_model = genai.GenerativeModel(CHAT_MODEL)
