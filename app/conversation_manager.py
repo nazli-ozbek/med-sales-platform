@@ -1,14 +1,14 @@
-# conversation_manager.py
-
 class ConversationManager:
     def __init__(self):
         self.current_state = None
 
         # Örnek geçiş tablosu
         self.transition_map = {
-            "QUESTIONNAIRE:": "LATENT_INTEREST",
+            "QUESTIONNAIRE": "LATENT_INTEREST",
             "LATENT_INTEREST": "ASK_INFO",
-            "ASK_INFO": "ASK_RISKS",
+            "ASK_INFO": "SELECT_DOCTOR",
+            "SELECT_DOCTOR": "SELECT_DOCTOR_DONE",
+            "SELECT_DOCTOR_DONE": "ASK_RISKS",
             "ASK_RISKS": "ASK_RECOVERY",
             "ASK_RECOVERY": "END",
             "NEGOTIATE": "END",

@@ -9,7 +9,12 @@ class NegotiationSession:
         self.last_offer = None
         self.history = []
         self.polarity_history = []
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        self.model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        self.procedure = procedure
+        self.doctor = None  # yeni alan
+
+    def set_doctor(self, doctor_info):
+        self.doctor = doctor_info
 
     def respond(self, message):
         self.history.append({"user": message})
@@ -46,7 +51,7 @@ class NegotiationSession:
         - Stay within the negotiation range [{self.min_price}₺ - {self.max_price}₺].
         - If the user's offer is below the Minimum Acceptable Price, decline politely and counter-offer with a fair price.
         - Always stay polite, realistic, and emotionally aware based on the user's emotional tone.
-
+        
         Sentiment analysis:
         - Current Message Polarity: {current_polarity:.2f}
         - Average Conversation Polarity: {avg_polarity:.2f}
@@ -57,6 +62,7 @@ class NegotiationSession:
         - For your first offer, decide on a fair starting price based on the user’s average emotional tone. 
         - The first offer should be between the base price ({self.base}) and the maximum allowed price ({self.max_price})
         - Do not mention the base price, just start the negotiation using the first offer
+        - Do NOT mention these strategies or any reasoning to the user.
         - Be adaptive: if the user seems more positive, you may start with a slightly higher price.
         - If the user seems skeptical or negative, consider starting with a more cautious offer.
         - Make sure the price is within the allowed range.

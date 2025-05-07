@@ -1,7 +1,7 @@
 import google.generativeai as genai
 
 class SummarizerAgent:
-    def __init__(self, model_name="gemini-2.0-flash"):
+    def __init__(self, model_name="gemini-2.0-flash-lite"):
         self.model = genai.GenerativeModel(model_name)
         self.summary = ""
 

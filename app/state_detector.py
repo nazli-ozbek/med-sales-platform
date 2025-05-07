@@ -20,6 +20,12 @@ def detect_state(user_message, last_agent_message=None) -> str:
         "  Example: 'I don’t like my nose.' / 'I wish my teeth looked better.'\n\n"
         "- ASK_INFO: The user wants to know what the procedure is, how it's performed, or general information. \n"
         "  Example: 'How does rhinoplasty work?' / 'Can you tell me what liposuction is?'\n\n"
+        "- SELECT_DOCTOR: The user asks to see doctors who perform a procedure (e.g., 'Which doctors do this?') OR "
+        "the assistant offers to show available doctors and the user agrees (e.g., 'Yes, show me'). Also classify here if the user selects a doctor "
+        "from a previously shown list (e.g., 'I choose Dr. X' or 'The second one').\n\n"
+        "- SELECT_DOCTOR_DONE: The user has selected a doctor (e.g., replied with '1', '2', etc.). "
+        "  Confirm their selection and gently ask if they would like to hear about the potential risks of the procedure. "
+        "  Example: '1' / 'Dr. Smith please' / 'The second one'\n\n"
         "- ASK_PRICE: The user asks about the cost or price of the procedure. \n"
         "  Example: 'How much does it cost?' / 'What’s the price for this treatment?'\n\n"
         "- NEGOTIATE: The user reacts to a price by expressing it is too high, asks for a discount, or offers a counter-price. \n"
@@ -68,7 +74,7 @@ def detect_procedure(user_message: str) -> str:
     """
 
     # Burada model adın sabit olsun
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash-lite")
 
     system_prompt = (
         "You are an AI assistant that classifies user messages into medical procedures.\n\n"
@@ -78,7 +84,7 @@ def detect_procedure(user_message: str) -> str:
         "- liposuction\n"
         "- dental_implant\n\n"
         "If the user's message clearly relates to one of these, respond ONLY with the procedure name.\n"
-        "If you are unsure or if the message is irrelevant, default to 'rhinoplasty'.\n"
+        "If you are unsure or if the message is irrelevant, default to 'unknown'.\n"
         "Do not explain. Respond only with the label text."
     )
 
