@@ -66,6 +66,7 @@ def find_relevant_chunks(index, chunks, q_vec, top_k=2):
 def generate_answer(model_name, user_message, context, current_state, last_agent_msg=None, session=None):
     model = genai.GenerativeModel(model_name)
 
+    # Duygu analizi
     blob = TextBlob(user_message)
     polarity = blob.sentiment.polarity
     polarity_list.append(polarity)
@@ -74,60 +75,68 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
     chat_history.append(f"User: {user_message}")
     summarizer.update_summary(chat_history)
 
+    # Prompt içeriği
     system_prompt = (
         "You are a helpful, natural, and emotionally aware AI assistant helping users with medical procedures.\n"
-         "Your responses must be concise, practical, and easy to understand.\n"
-        "Avoid long explanations unless the user explicitly asks for more details.\n"
-        "Use short paragraphs and plain language. Prefer bullet points for lists.\n"
-        "Try to keep your response under 5 sentences unless otherwise needed.\n\n"
         "The conversation may involve information requests, price discussions, emotional concerns, or appointment confirmations.\n\n"
+
         "Before assisting the user, a short medical intake form must be completed (e.g., full name, age, allergies, etc.).\n"
         "The form is managed by the system. DO NOT ask these questions yourself.\n"
         "Until the form is fully completed, if the user asks unrelated things, gently remind them to continue answering the form.\n\n"
+
         "Once the form is completed, you will be able to assist based on:\n"
         "- The user's detected intent (called Detected State)\n"
         "- Background information (Context)\n"
         "- Conversation summary\n"
         "- User’s emotional tone (sentiment polarity)\n\n"
+
         "Detected State meanings:\n"
         "- QUESTIONNAIRE → The form is still being answered.\n"
-        "- LATENT_INTEREST → User hints dissatisfaction. Gently suggest a relevant procedure.\n"
-        "- ASK_INFO → Give info. Then ask if user wants to see available doctors.\n"
-        "- SELECT_DOCTOR → A list was shown, and the user responded with a number.\n"
-        "- SELECT_DOCTOR_DONE → Confirm and offer to list risks.\n"
+        "- LATENT_INTEREST → User hints dissatisfaction (e.g. 'I hate my nose'). Gently suggest a relevant procedure. Then ask if want to get any info\n"
+        "- ASK_INFO → Give short explanation. Then ask the user if they’d like to see available doctors for this procedure.\n"
+        "- SELECT_DOCTOR → If the assistant has listed doctors and the user replies with a number (e.g., '1', '2'), interpret it as selecting a doctor. Then confirm selection and continue to the next step.\n"
+        "- SELECT_DOCTOR_DONE → A doctor has just been selected. Confirm this and politely ask the user if they would like to hear about the procedure’s potential risks.\n"
         "- ASK_RISKS → List main risks. Then ask about recovery.\n"
         "- ASK_RECOVERY → Explain healing time and restrictions.\n"
         "- ASK_PRICE → Say the base price and value.\n"
-        "- NEGOTIATE → Counter politely.\n"
-        "- ACCEPT_PRICE → Confirm and proceed.\n"
+        "- NEGOTIATE → Counter politely within the allowed range.\n"
+        "- ACCEPT_PRICE → Confirm agreement and next steps.\n"
         "- ASK_ALTERNATIVES → Offer complementary options.\n"
-        "- ESCALATE → Forward to human rep.\n"
-        "- CONSULT_BOOKED → Confirm and close.\n\n"
+        "- ESCALATE → Forward to human rep politely.\n"
+        "- CONSULT_BOOKED → Confirm appointment and close politely.\n\n"
+
         f"Sentiment Analysis:\n"
-        f"- Current polarity: {polarity:.2f}\n"
-        f"- Average polarity: {avg_polarity:.2f}\n"
-        f"- Conversation Summary:\n{summarizer.get_summary()}\n"
+        f"- Current message polarity: {polarity:.2f}\n"
+        f"- Average sentiment polarity: {avg_polarity:.2f}\n"
+        f"- Conversation Summary:\n{summarizer.get_summary()}\n\n"
+        "Interpretation:\n"
+        "- Close to +1.0 → excited, trusting\n"
+        "- Close to  0.0 → neutral, uncertain\n"
+        "- Close to -1.0 → frustrated, skeptical\n"
+        "Use this to adapt your tone accordingly."
     )
 
-    if session and session.doctor:
+    if session.doctor:
         system_prompt += f'\n\nSelected Doctor:\n- Name: {session.doctor["name"]} ({session.doctor["specialization"]})'
 
     if last_agent_msg:
-        system_prompt += f"\nPrevious Agent Message:\n\"{last_agent_msg.strip()}\""
+        system_prompt += f"\nPrevious Agent Message:\n\"{last_agent_msg.strip()}\"\n"
 
+    # quit/exit özel durumu için son talimat
     if user_message.lower() in ["quit", "exit"]:
         system_prompt += "\n\nThe user wants to end the conversation. Respond politely and do not ask any further questions."
     else:
         system_prompt += "\n\nAlways end your reply with a soft, relevant follow-up question to keep the conversation going."
 
+    # Final prompt
     prompt = (
         f"{system_prompt}\n\n"
         f"Detected State: {current_state}\n"
         f"Context:\n{context}\n\n"
         f"User Message: {user_message}\n"
         f"Agent Response:"
-    )
 
+    )
     response = model.generate_content(
         prompt,
         generation_config=genai.types.GenerationConfig(
@@ -135,7 +144,6 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
             max_output_tokens=256,
         )
     )
-
     response_text = response.text.strip()
     chat_history.append(f"Agent: {response_text}")
     return response_text
@@ -167,11 +175,12 @@ async def handle_chat_request(chat_input):
         )
         greeting = greeting_model.generate_content(greeting_prompt).text.strip()
 
-        first_q = questionnaire.get_next_question()
+        first_q = questionnaire.get_all_questions()
+        first_q_text = "\n".join(first_q)
         chat_history.append(f"Agent: {greeting}")
-        chat_history.append(f"Agent: {first_q}")
-
-        return {"response": f"{greeting}\n\n{first_q}"}
+        chat_history.append(f"Agent: {first_q_text}")
+        return {
+            "response": f"{greeting}\n\nBefore we begin, please answer the following questions in a single message:\n\n{first_q_text}"}
 
     user_query = clean_input(chat_input.message)
 
@@ -199,16 +208,24 @@ async def handle_chat_request(chat_input):
         manager.update_state(detected_state)
 
         if detected_state == "QUESTIONNAIRE" and not questionnaire.is_complete():
-            questionnaire.answer_current_question(user_query)
-            if questionnaire.is_complete():
+            success = questionnaire.process_bulk_response(user_query)
+
+            if success and questionnaire.is_complete():
                 form_completed = True
-                msg = "Thanks! How can I help you now?"
+                # cevapları dosyaya yaz
+                os.makedirs("saved_forms", exist_ok=True)
+                with open("saved_forms/last_questionnaire.json", "w", encoding="utf-8") as f:
+                    json.dump(questionnaire.get_all_answers(), f, indent=2, ensure_ascii=False)
+
+                msg = "Thanks! Your form has been saved successfully. How can I assist you now?"
                 chat_history.append(f"Agent: {msg}")
                 return {"response": msg}
             else:
-                next_q = questionnaire.get_next_question()
-                chat_history.append(f"Agent: {next_q}")
-                return {"response": next_q}
+                missing = questionnaire.get_unanswered_questions()
+                msg = "I couldn't detect all your answers. Please respond to the following questions:\n\n" + "\n".join(
+                    missing)
+                chat_history.append(f"Agent: {msg}")
+                return {"response": msg}
 
         if user_query.isdigit() and manager.current_state in ("SELECT_DOCTOR", "SELECT_DOCTOR_DONE"):
             idx = int(user_query) - 1
