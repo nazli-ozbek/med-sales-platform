@@ -30,29 +30,41 @@ class QuestionnaireManager:
 
     def process_bulk_response(self, user_response):
         prompt = (
-            "You are an AI assistant helping fill out a medical intake form. Below are 8 questions "
-            "and a user response. Extract all the answers you can, and return only a valid JSON object "
-            "mapping question numbers (Q1–Q8) to answers. If any question is not answered, simply skip it.\n\n"
-            "QUESTIONS:\n" + "\n".join(self.questions) +
-            f"\n\nUSER RESPONSE:\n{user_response}\n\n"
-            "Return result in this format ONLY (strict JSON):\n"
-            "{\n  \"Q1\": {\"question\": \"...\", \"answer\": \"...\"},\n  \"Q2\": {...},\n  ...\n}"
+                "You are an AI assistant helping fill out a medical intake form. Below are 8 questions "
+                "and a user response. Extract all the answers you can, and return only a valid JSON object "
+                "mapping question numbers (Q1–Q8) to answers. If any question is not answered, simply skip it.\n\n"
+                "QUESTIONS:\n" + "\n".join(self.questions) +
+                f"\n\nUSER RESPONSE:\n{user_response}\n\n"
+                "Return result in this format ONLY (strict JSON):\n"
+                "{\n  \"Q1\": {\"question\": \"...\", \"answer\": \"...\"},\n  \"Q2\": {...},\n  ...\n}"
         )
 
         try:
             response = self.model.generate_content(prompt)
             response_text = response.text.strip()
 
-            # JSON düzeltmeleri (örneğin tek tırnak → çift tırnak)
             if response_text.startswith("```json"):
                 response_text = response_text[7:]
             if response_text.endswith("```"):
                 response_text = response_text[:-3]
 
             parsed = json.loads(response_text)
+
             for q_num, q_obj in parsed.items():
                 if q_num not in self.answers:
                     self.answers[q_num] = q_obj
+
+            import os
+            # Q1 cevabını dosya adı olarak kullan
+            user_name = self.answers.get("Q1", {}).get("answer", "unknown_user")
+            filename = user_name.strip().replace(" ", "_").replace("/", "_").lower() + "_questionnaire.json"
+
+            # Dosyaya yaz
+            os.makedirs("saved_forms", exist_ok=True)
+            with open(f"saved_forms/{filename}", "w", encoding="utf-8") as f:
+                json.dump(self.answers, f, indent=2, ensure_ascii=False)
+
+
             return True
 
         except Exception as e:
