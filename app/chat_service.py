@@ -20,7 +20,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 # Model ayarları
 EMBED_MODEL = "models/embedding-001"
-CHAT_MODEL = "gemini-2.0-flash"
+CHAT_MODEL = "gemini-2.0-flash-lite"
 INDEX_FOLDER = "indexes/"
 
 # Global objeler
@@ -103,7 +103,6 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
         "- ACCEPT_PRICE → Confirm agreement and next steps.\n"
         "- ASK_ALTERNATIVES → Offer complementary options.\n"
         "- ESCALATE → Forward to human rep politely.\n"
-        "- CONSULT_BOOKED → Confirm appointment and close politely.\n\n"
 
         f"Sentiment Analysis:\n"
         f"- Current message polarity: {polarity:.2f}\n"
@@ -114,13 +113,41 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
         "- Close to  0.0 → neutral, uncertain\n"
         "- Close to -1.0 → frustrated, skeptical\n"
         "Use this to adapt your tone accordingly."
+        
+        "\n\nAdditional Behavioral Guidelines:\n"
+        "- Maintain a warm, conversational, and slightly playful tone when appropriate. You should sound natural and emotionally intelligent, like a friendly assistant rather than a formal bot.\n"
+        "- If the user asks unrelated or personal questions (e.g. 'Am I beautiful?', 'Do you like me?'), respond positively and tie it gently back to the cosmetic procedure context. For example: 'Of course you are! But with this procedure, you might feel even more confident and radiant.'\n"
+        "- Avoid cold or robotic answers. Use friendly expressions, occasional mild humor, and empathetic phrasing when replying.\n"
+        "- Do not decline answering lighthearted or off-topic questions outright. Instead, acknowledge them warmly and subtly bring the conversation back on track.\n"
+        "- Even when giving factual medical information, use human-like language. Example: Instead of 'The swelling lasts 3-5 days', say 'You'll probably notice some swelling for 3 to 5 days, but nothing to worry about — it’s totally expected and manageable.'\n"
+        "- Always try to make the user feel heard, valued, and supported throughout the conversation.\n"
     )
 
-    if session.doctor:
-        system_prompt += f'\n\nSelected Doctor:\n- Name: {session.doctor["name"]} ({session.doctor["specialization"]})'
+    if session and session.doctor:
+        system_prompt += f'\n\nSelected Doctor:\n- {session.doctor["name"]} ({session.doctor["specialization"]})'
+
+        # Kullanıcının geçmiş form yanıtlarını Medical Profile olarak ekle
+        if session.medical_profile:
+            profile_lines = []
+            for q in sorted(session.medical_profile):
+                question = session.medical_profile[q]["question"]
+                answer = session.medical_profile[q]["answer"]
+                profile_lines.append(f"- {question} {answer}")
+            system_prompt += "\n\nMedical Profile:\n" + "\n".join(profile_lines)
 
     if last_agent_msg:
         system_prompt += f"\nPrevious Agent Message:\n\"{last_agent_msg.strip()}\"\n"
+
+    if current_state == "FINAL_CONFIRMATION":
+        system_prompt += (
+            "\n\nThe user has confirmed the agreement. "
+            "Thank them warmly, say you’ll notify the doctor, and end the conversation positively. "
+            "Do NOT ask any questions, just inform the patient and say goodbye. "
+            "Keep it friendly, short, and professional."
+        )
+
+        if session:
+            session.session_closed = True
 
     # quit/exit özel durumu için son talimat
     if user_message.lower() in ["quit", "exit"]:
@@ -152,6 +179,8 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
 async def handle_chat_request(chat_input):
     global last_procedure, faiss_index, chunks, procedure_info, session, form_completed
 
+    if session and getattr(session, "session_closed", False):
+        return {"response": "This conversation has been completed. Please start a new session if you have other questions."}
     if chat_input.message.strip() == "__RESET__":
         global chat_history, polarity_list, summarizer, manager, questionnaire, form_completed
         chat_history = []
@@ -162,6 +191,7 @@ async def handle_chat_request(chat_input):
         form_completed = False
         procedure_info = get_procedure_by_name(last_procedure)
         session = None
+
 
         # LLM ile gerçek karşılama mesajı üret
         greeting_model = genai.GenerativeModel(CHAT_MODEL)
@@ -216,7 +246,8 @@ async def handle_chat_request(chat_input):
                 os.makedirs("saved_forms", exist_ok=True)
                 with open("saved_forms/last_questionnaire.json", "w", encoding="utf-8") as f:
                     json.dump(questionnaire.get_all_answers(), f, indent=2, ensure_ascii=False)
-
+                if session:
+                    session.set_questionnaire(questionnaire.get_all_answers())
                 msg = "Thanks! Your form has been saved successfully. How can I assist you now?"
                 chat_history.append(f"Agent: {msg}")
                 return {"response": msg}
@@ -259,12 +290,9 @@ async def handle_chat_request(chat_input):
         }
 
         if detected_state in ("NEGOTIATE", "ASK_PRICE", "ACCEPT_PRICE"):
-            negotiation_response = session.respond(user_query)
+            negotiation_response = session.respond(user_query, detected_state=detected_state)
             chat_history.append(f"Agent: {negotiation_response}")
             return {"response": negotiation_response}
-
-        if detected_state == "CONSULT_BOOKED":
-            return {"response": "Görüşmek üzere!"}
 
         query_vec = embed_query(user_query)
         best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)

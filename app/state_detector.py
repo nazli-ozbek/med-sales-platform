@@ -40,6 +40,10 @@ def detect_state(user_message, last_agent_message=None) -> str:
         "  Example: 'Is there a non-surgical option?' / 'Are there any creams instead of surgery?'\n\n"
         "- ESCALATE: The user expresses strong emotions, anxiety, ethical/legal concerns, or situations that require human attention. \n"
         "  Example: 'I’m really scared and don’t know what to do.' / 'Is this even legal?' / 'I feel very anxious about this.'\n\n"
+        "- FINAL_CONFIRMATION: The assistant has just offered a final price and is asking the user to confirm it.\n"
+        "The user must reply clearly with confirmation (e.g., 'yes', 'onaylıyorum', 'tamam') to proceed.\n\n"
+        "Example: 'Yes, I confirm' / 'Tamam, onaylıyorum'\n\n"
+
         "IMPORTANT INSTRUCTIONS:\n"
         "- Respond ONLY with one of the labels above. Do NOT include explanations.\n"
         "- If unsure, default to 'ASK_INFO'.\n"

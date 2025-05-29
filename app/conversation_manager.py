@@ -11,9 +11,10 @@ class ConversationManager:
             "SELECT_DOCTOR_DONE": "ASK_RISKS",
             "ASK_RISKS": "ASK_RECOVERY",
             "ASK_RECOVERY": "END",
-            "NEGOTIATE": "END",
-            "ACCEPT_PRICE": "END",
             "ASK_PRICE": "NEGOTIATE",
+            "NEGOTIATE": "ACCEPT_PRICE",
+            "ACCEPT_PRICE": "FINAL_CONFIRMATION",
+            "FINAL_CONFIRMATION": "END",
             "ASK_ALTERNATIVES": "END",
             "ESCALATE": "HUMAN",
         }
