@@ -279,35 +279,54 @@ async def handle_chat_request(chat_input):
                 chat_history.append(f"Agent: {msg}")
                 return {"response": msg}
 
-        if user_query.isdigit() and manager.current_state in ("SELECT_DOCTOR", "SELECT_DOCTOR_DONE"):
+
+        if manager.current_state in ("SELECT_DOCTOR", "SELECT_DOCTOR_DONE"):
             if session is None:
                 procedure_info = get_procedure_by_name(detected_procedure)
                 session = NegotiationSession(procedure_info)
-            idx = int(user_query) - 1
-            doctors = get_doctors_by_procedure(detected_procedure)
-            if 0 <= idx < len(doctors):
-                chosen_doctor = doctors[idx]
-                session.set_doctor(chosen_doctor)
-                if manager.current_state == "SELECT_DOCTOR":
-                    manager.update_state("SELECT_DOCTOR_DONE")
+            try:
+                idx = int(user_query.strip())
+                doctors = get_doctors_by_procedure(detected_procedure)
+
+                if 1 <= idx <= len(doctors):
+                    chosen_doctor = doctors[idx - 1]
+                    print(f"[DEBUG] Dr. {chosen_doctor['name']} seçildi.")
+                    if session is None:
+                        procedure_info = get_procedure_by_name(detected_procedure)
+                        session = NegotiationSession(procedure_info)
+                    session.set_doctor(chosen_doctor)
+
+                    if manager.current_state == "SELECT_DOCTOR":
+                        manager.update_state("SELECT_DOCTOR_DONE")
+                    else:
+                        manager.update_state("ASK_RISKS")
+
+                    answer = generate_answer(
+                        model_name=CHAT_MODEL,
+                        user_message=user_query,
+                        context="",
+                        current_state=manager.current_state,
+                        last_agent_msg=last_agent_msg,
+                        session=session
+                    )
+                    return {"response": answer}
                 else:
-                    manager.update_state("ASK_RISKS")
-                answer = generate_answer(
-                    model_name=CHAT_MODEL,
-                    user_message=user_query,
-                    context="",
-                    current_state=detected_state,
-                    last_agent_msg=last_agent_msg,
-                    session=session
-                )
-                return {"response": answer}
-            else:
-                return {"response": "Invalid choice. Please try again."}
+                    return {
+                        "response": "Invalid selection. Please enter a valid number corresponding to one of the listed doctors."}
+            except ValueError:
+                pass
 
         if detected_state == "SELECT_DOCTOR":
             doctors = get_doctors_by_procedure(detected_procedure)
-            doctor_list = "\n".join([f"{i+1}. {doc['name']} ({doc['specialization']})" for i, doc in enumerate(doctors)])
-            return {"response": f"Suitable doctors for this procedure: \n \n{doctor_list}\nPlease select a doctor (enter a number)."}
+
+            if not doctors:
+                msg = "There are no available doctors for this procedure."
+            else:
+                doctor_list = "\n".join(
+                    [f"{i + 1}. Dr. {doc['name']} ({doc['specialization']})" for i, doc in enumerate(doctors)])
+                msg = f"Suitable doctors for this procedure:\n\n{doctor_list}\nPlease select a doctor by entering a number."
+
+            return {"response": msg}
 
         if detected_state == "ESCALATE":
             return {"response": "I'm connecting you to a specialist representative. Please hold on..."
