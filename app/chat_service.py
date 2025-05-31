@@ -1,8 +1,8 @@
 import os
 import json
-import numpy as np
-import faiss
+from pinecone import Pinecone
 from dotenv import load_dotenv
+import numpy as np
 import google.generativeai as genai
 
 from app.database import get_procedure_by_name, get_doctors_by_procedure
@@ -17,6 +17,10 @@ from app.questionnaire_manager import QuestionnaireManager
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")  # örnek: "gcp-starter"
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
 
 # Model ayarları
 EMBED_MODEL = "models/embedding-001"
@@ -33,22 +37,19 @@ form_completed = False
 form_completed = False
 
 last_procedure = "rhinoplasty"
-faiss_index, chunks = None, None
+pinecone_index, chunks = None, None
 procedure_info = None
 session = None
 
 def clean_input(text: str) -> str:
     return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
 
-def load_faiss_index_and_chunks(procedure_name: str):
-    index_path = os.path.join(INDEX_FOLDER, f"{procedure_name}.index")
-    chunks_path = os.path.join(INDEX_FOLDER, f"{procedure_name}_chunks.json")
-    if not os.path.exists(index_path) or not os.path.exists(chunks_path):
-        raise FileNotFoundError(f"{procedure_name} için gerekli dosyalar bulunamadı.")
-    index = faiss.read_index(index_path)
-    with open(chunks_path, "r", encoding="utf-8") as jf:
-        chunks = json.load(jf)
-    return index, chunks
+def load_pinecone_index():
+    index_name = "procedure-embeddings"
+    if index_name not in pc.list_indexes().names():
+        raise ValueError(f"Pinecone index '{index_name}' not found.")
+    return pc.Index(index_name)
+
 
 def embed_query(query):
     response = genai.embed_content(
@@ -56,12 +57,19 @@ def embed_query(query):
         content=query,
         task_type="retrieval_document"
     )
-    vec = response["embedding"]
-    return np.array(vec, dtype="float32").reshape(1, -1)
+    return np.array(response["embedding"], dtype="float32").reshape(1, -1)
 
-def find_relevant_chunks(index, chunks, q_vec, top_k=2):
-    _, idx = index.search(q_vec, top_k)
-    return [chunks[i] for i in idx[0]]
+def find_relevant_chunks(index, query_embedding, procedure_name, top_k=2):
+    response = index.query(
+        vector=query_embedding.tolist()[0],
+        top_k=top_k,
+        include_metadata=True,
+        filter={"procedure": procedure_name}  # 🔥 filtre eklendi
+    )
+    return [match["metadata"]["text"] for match in response["matches"] if "metadata" in match and "text" in match["metadata"]]
+
+
+
 
 def generate_answer(model_name, user_message, context, current_state, last_agent_msg=None, session=None):
     model = genai.GenerativeModel(model_name)
@@ -79,17 +87,30 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
     system_prompt = (
         "You are a helpful, natural, and emotionally aware AI assistant helping users with medical procedures.\n"
         "The conversation may involve information requests, price discussions, emotional concerns, or appointment confirmations.\n\n"
-
         "Before assisting the user, a short medical intake form must be completed (e.g., full name, age, allergies, etc.).\n"
         "The form is managed by the system. DO NOT ask these questions yourself.\n"
         "Until the form is fully completed, if the user asks unrelated things, gently remind them to continue answering the form.\n\n"
-
+        "IMPORTANT: You must ONLY answer using the CONTEXT section. "
+        "If the answer is not there, respond with:\n"
+        "\"I'm sorry, I couldn’t find that information in the documents.\" "
+        "Then politely continue the conversation by offering help on something else or asking a gentle follow-up question."
         "Once the form is completed, you will be able to assist based on:\n"
         "- The user's detected intent (called Detected State)\n"
         "- Background information (Context)\n"
         "- Conversation summary\n"
         "- User’s emotional tone (sentiment polarity)\n\n"
-
+        
+        "IMPORTANT RULE:\n"
+        "- The price of the procedure depends on the selected doctor.\n"
+        "- If the user asks about price before selecting a doctor, politely inform them to choose a doctor first.\n"
+        "- Do NOT mention any base price or average unless a doctor is selected.\n\n"
+        "- Maintain a warm, conversational, and slightly playful tone when appropriate. You should sound natural and emotionally intelligent, like a friendly assistant rather than a formal bot.\n"
+        "- If the user asks unrelated or personal questions (e.g. 'Am I beautiful?', 'Do you like me?'), respond positively and tie it gently back to the cosmetic procedure context. For example: 'Of course you are! But with this procedure, you might feel even more confident and radiant.'\n"
+        "- Avoid cold or robotic answers. Use friendly expressions, occasional mild humor, and empathetic phrasing when replying.\n"
+        "- Do not decline answering lighthearted or off-topic questions outright. Instead, acknowledge them warmly and subtly bring the conversation back on track.\n"
+        "- Even when giving factual medical information, use human-like language. Example: Instead of 'The swelling lasts 3-5 days', say 'You'll probably notice some swelling for 3 to 5 days, but nothing to worry about — it’s totally expected and manageable.'\n"
+        "- Always try to make the user feel heard, valued, and supported throughout the conversation.\n"
+        
         "Detected State meanings:\n"
         "- QUESTIONNAIRE → The form is still being answered.\n"
         "- LATENT_INTEREST → User hints dissatisfaction (e.g. 'I hate my nose'). Gently suggest a relevant procedure. Then ask if want to get any info\n"
@@ -113,15 +134,16 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
         "- Close to  0.0 → neutral, uncertain\n"
         "- Close to -1.0 → frustrated, skeptical\n"
         "Use this to adapt your tone accordingly."
-        
-        "\n\nAdditional Behavioral Guidelines:\n"
-        "- Maintain a warm, conversational, and slightly playful tone when appropriate. You should sound natural and emotionally intelligent, like a friendly assistant rather than a formal bot.\n"
-        "- If the user asks unrelated or personal questions (e.g. 'Am I beautiful?', 'Do you like me?'), respond positively and tie it gently back to the cosmetic procedure context. For example: 'Of course you are! But with this procedure, you might feel even more confident and radiant.'\n"
-        "- Avoid cold or robotic answers. Use friendly expressions, occasional mild humor, and empathetic phrasing when replying.\n"
-        "- Do not decline answering lighthearted or off-topic questions outright. Instead, acknowledge them warmly and subtly bring the conversation back on track.\n"
-        "- Even when giving factual medical information, use human-like language. Example: Instead of 'The swelling lasts 3-5 days', say 'You'll probably notice some swelling for 3 to 5 days, but nothing to worry about — it’s totally expected and manageable.'\n"
-        "- Always try to make the user feel heard, valued, and supported throughout the conversation.\n"
+
     )
+    system_prompt += (
+        "\n\nRESPONSE LENGTH GUIDELINES:\n"
+        "- Keep responses short and focused (2 to 5 sentences).\n"
+        "- Avoid long paragraphs unless specifically asked for detailed information.\n"
+        "- When possible, respond concisely but warmly.\n"
+        "- Use clear and friendly language — short does not mean cold or robotic."
+    )
+    print("\n[DEBUG] Context:\n", context)
 
     if session and session.doctor:
         system_prompt += f'\n\nSelected Doctor:\n- {session.doctor["name"]} ({session.doctor["specialization"]})'
@@ -159,11 +181,11 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
     prompt = (
         f"{system_prompt}\n\n"
         f"Detected State: {current_state}\n"
-        f"Context:\n{context}\n\n"
+        f"Context (from retrieved documents):\n{context}\n\n"
         f"User Message: {user_message}\n"
         f"Agent Response:"
-
     )
+
     response = model.generate_content(
         prompt,
         generation_config=genai.types.GenerationConfig(
@@ -177,10 +199,8 @@ def generate_answer(model_name, user_message, context, current_state, last_agent
 
 # ---------------- Web API ----------------
 async def handle_chat_request(chat_input):
-    global last_procedure, faiss_index, chunks, procedure_info, session, form_completed
+    global last_procedure, pinecone_index, chunks, procedure_info, session, form_completed
 
-    if session and getattr(session, "session_closed", False):
-        return {"response": "This conversation has been completed. Please start a new session if you have other questions."}
     if chat_input.message.strip() == "__RESET__":
         global chat_history, polarity_list, summarizer, manager, questionnaire, form_completed
         chat_history = []
@@ -191,8 +211,6 @@ async def handle_chat_request(chat_input):
         form_completed = False
         procedure_info = get_procedure_by_name(last_procedure)
         session = None
-
-
         # LLM ile gerçek karşılama mesajı üret
         greeting_model = genai.GenerativeModel(CHAT_MODEL)
         greeting_prompt = (
@@ -211,6 +229,9 @@ async def handle_chat_request(chat_input):
         chat_history.append(f"Agent: {first_q_text}")
         return {
             "response": f"{greeting}\n\nBefore we begin, please answer the following questions in a single message:\n\n{first_q_text}"}
+    elif session and getattr(session, "session_closed", False):
+        return {
+            "response": "This conversation has been completed. Please start a new session by refreshing the page or typing '__RESET__'."}
 
     user_query = clean_input(chat_input.message)
 
@@ -221,8 +242,8 @@ async def handle_chat_request(chat_input):
         if detected_procedure == "unknown":
             detected_procedure = last_procedure
 
-        if detected_procedure != last_procedure or faiss_index is None:
-            faiss_index, chunks = load_faiss_index_and_chunks(detected_procedure)
+        if detected_procedure != last_procedure or pinecone_index is None:
+            pinecone_index = load_pinecone_index()
             procedure_info = get_procedure_by_name(detected_procedure)
             session = NegotiationSession(procedure_info)
             last_procedure = detected_procedure
@@ -259,6 +280,9 @@ async def handle_chat_request(chat_input):
                 return {"response": msg}
 
         if user_query.isdigit() and manager.current_state in ("SELECT_DOCTOR", "SELECT_DOCTOR_DONE"):
+            if session is None:
+                procedure_info = get_procedure_by_name(detected_procedure)
+                session = NegotiationSession(procedure_info)
             idx = int(user_query) - 1
             doctors = get_doctors_by_procedure(detected_procedure)
             if 0 <= idx < len(doctors):
@@ -295,7 +319,7 @@ async def handle_chat_request(chat_input):
             return {"response": negotiation_response}
 
         query_vec = embed_query(user_query)
-        best_chunks = find_relevant_chunks(faiss_index, chunks, query_vec, top_k=2)
+        best_chunks = find_relevant_chunks(pinecone_index, query_vec, detected_procedure, top_k=2)
         context_text = "\n\n".join(best_chunks)
 
         answer = generate_answer(
