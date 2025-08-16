@@ -83,6 +83,8 @@ pip install -r requirements.txt
 
 # Run FastAPI server
 uvicorn main:app --reload
+```
+
 
 ### Frontend Setup
 ```bash
@@ -94,7 +96,8 @@ npm install
 # Start development server
 npm run dev
 
-#Access the app at: http://localhost:3000
+Access the app at: http://localhost:3000
+```
 
 ## 📊 Evaluation
 
