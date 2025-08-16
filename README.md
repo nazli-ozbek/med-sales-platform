@@ -120,7 +120,7 @@ Access the app at: http://localhost:3000
 
 ## 👩‍💻 Authors
 
-- **Nazlı Çiçek Özbek** – [LinkedIn](https://www.linkedin.com/in/nazli-çiçek-özbek) | [GitHub](https://github.com/nazli-ozbek)  
+- **Nazlı Çiçek Özbek**
 - **Mert Korkmaz**  
 
 ---
